@@ -1,0 +1,1 @@
+A module to parse data for OSSEC. Required for OSSEC API
