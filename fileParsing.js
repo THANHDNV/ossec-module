@@ -58,10 +58,10 @@ watcher
                 // db.close();
               })
 
-              var lines = data.toString().split("\n");
-              for (line in lines) {
-		            if (!(/^\s*$/.test(lines[line]))) {
-                  var agentInfoArray = lines[line].split(" ");
+              var lines = data.toString().trim().split("\n");
+              lines.forEach(line => {
+                if (!(/^\s*$/.test(line))) {
+                  var agentInfoArray = line.split(" ");
                   var agentObj = {
                     id: agentInfoArray[0].toString().trim(),
                     name: agentInfoArray[1].toString().trim(),
@@ -69,8 +69,6 @@ watcher
                     hashed: agentInfoArray[3].toString().trim(),
                   }
 
-                  var insert = false;
-                  
                   dbo.collection("agent").insertOne(agentObj, (insErr, insRes) => {
                     if (insErr) {
                       var updateObj = { $set: {
@@ -95,7 +93,8 @@ watcher
                     // db.close();
                   })
                 }
-              }
+              })
+              db.close();
             }
           })
           }

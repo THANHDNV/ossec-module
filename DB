@@ -15,7 +15,7 @@ global
 		a collection of various data in key value format
 
 ({agent_id})
-	pm_event (rootcheck - /queue/rootcheck
+	pm_event (rootcheck - /queue/rootcheck)
 		id
 		date_first
 		date_last

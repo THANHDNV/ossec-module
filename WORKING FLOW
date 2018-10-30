@@ -1,0 +1,42 @@
+global
+    agent
+        add
+            clear db
+            read client.keys
+                create list of agent id
+                create agent obj (id, name, ip, key)
+                    check data in db
+                        if has data
+                            check if db id data in agent id list
+                                if yes
+                                    update
+                                else
+                                    delete
+                            insert remaining agent obj
+                        else
+                            insert all agent obj
+            read files in agent-info 
+                create agent obj (os, os_arch, ossec_version, config_sum, merge_sum, lastAlive)
+                    check data in db
+                        if has data
+                            update agent based on agent id
+                        else
+                            throw err
+        change
+            read changed files
+                client.keys
+                    add new agent
+
+                    delete agent
+
+                agent-info
+                    change agent info
+                        update info
+        unlink
+    info
+        MaxAgent: {}
+
+{agent_id}
+    pm_event
+    fim_event
+    fim_file
