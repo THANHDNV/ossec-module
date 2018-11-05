@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const chokidar = require('chokidar');
-const mongoClient = require('mongodb').MongoClient;
+const path = require('path');
 const util = require('util');
 const fs = require('fs');
 const mongoose = require('mongoose');
@@ -32,17 +32,17 @@ var agentInfoModel = mongoose.model("agent", agentInfoSchema, "agent");
 
 // read files synchronously and get agent info
 async function readFilesFirst() {
-  filesAndDir.forEach((path, index) => {
+  filesAndDir.forEach((fPath, index) => {
     var isFile = false;;
     try {
-      isFile = fs.statSync(path).isFile();
+      isFile = fs.statSync(fPath).isFile();
     } catch (error) {
       return;
     }
     if (isFile) {
       // client.keys
       try {
-        var data = fs.readFileSync(path, 'utf8');
+        var data = fs.readFileSync(fPath, 'utf8');
 
         //connect to db
         mongoose.connect(url + "/" + globalCollection);
@@ -130,15 +130,14 @@ async function readFilesFirst() {
       }
     } else {
       //other folders
-      if (path.indexOf("/queue/agent-info") > -1) {
+      if (fPath.indexOf("/queue/agent-info") > -1) {
         //read each files in agent-info
         try {
-          const path = require('path');
           const dirName = "/queue/agent-info/";
-          var fileNames = fs.readdirSync(path.join(ossecDir, dirName), "utf8");
+          var fileNames = fs.readdirSync(fPath, "utf8");
 
           async function updateagentInfoFromFile(filename) {
-            var filePath = path.join(ossecDir, dirName, filename)
+            var filePath = path.join(fPath, filename)
             var isFile = fs.statSync(filePath);
             if (isFile) {
               async function getOsArch(os) {
@@ -226,71 +225,13 @@ async function readFilesFirst() {
 // watcher will watch file asynchronously
 
 async function watchFile(){
-
-}
-
-//calling main
-async function main() {
-  await readFilesFirst();
-}
-main();
-var watcher = chokidar.watch(filesAndDir, {persistent: true});
+  var watcher = chokidar.watch(filesAndDir, {persistent: true});
 
 watcher
   .on('add', function(fPath, stat) {
     console.log("File ", fPath, " has been added")
     if (fPath.indexOf("/queue/agent-info/") > -1) {
-    //   var fPathArray = fPath.split("/");
-    //   var fName = fPathArray[fPathArray.length - 1];
-    //   var id = fName.split("_")[0];
-    //   var name = fName.split("_")[1];
-
-    //   var os_arch = "";
-    //   function getOsArch(os) {        
-    //     var archs = [ "x86_64", "i386", "i686", "sparc", "amd64", "ia64", "AIX", "armv6", "armv7", "" ]
-    //     archs.forEach(arch => {
-    //       if (os.indexOf(arch) > -1) {os_arch = arch};
-    //     })
-    //   }
-
-    //   // get agent info from file
-      
-    //   fs.readFile(fPath, 'utf8', (err, data) => {
-    //     if (err) {
-    //       console.log("File reading Error: " + err);
-    //     } else {
-    //       mongoose.connect(url);
-    //       var db = mongoose.connection.useDb(globalCollection);
-    //       db.on("error", err => console.log("Connection Error: " + err));
-    //       db.on("open", () => {
-    //         console.log("Connected to update")
-    //         var agent = {}
-    //         agent.os = data.trim();
-    //         getOsArch(agent.os)
-    //         agent.os_arch = os_arch;
-    //         var ossecVersionArr = agent.os.split(" - ")[1].split(" / ").push("");
-    //         agent.version = ossecVersionArr[0];
-    //         agent.configSum = ossecVersionArr[1];
-    //         agent.lastAlive = stat.mTime;
-            
-    //         console.log(agent);
-    //         agentInfoModel.findOneAndUpdate({
-    //           id: id,
-    //           name: name,
-    //         }, agent, (err, doc, res) => {
-    //           if (err) {
-    //             console.log("Update Err: " + err)
-    //           } else {
-    //             console.log(doc);
-    //             console.log(res);
-    //             console.log();
-    //           }
-    //         }).then((res) => {
-    //           db.close();
-    //         })          
-    //       })
-    //     }
-    //   })
+    
     } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
 
     } else if (fPath.indexOf("/queue/syscheck/") > -1) {
@@ -298,7 +239,59 @@ watcher
     }
   })
   .on('change', function(fPath, stat) {
-    // console.log('File', path, 'has been changed');
+    console.log('File', path, 'has been changed');
+    if (fPath.indexOf("/etc/client.keys")) {
+      //New agent is added
+      //Agent is deleted
+
+      mongoose.connect(url + "/" + globalCollection);
+      var db = mongoose.connection;
+      db.on('error', err => console.log("Connection Error: " + err));
+      db.on('open', () => {
+        var data = "";
+
+        try {
+          data = fs.readFile(fPath, 'utf8');
+
+        } catch (error) {
+          console.log("Read file error: " + error);
+        }
+        var lines = data.trim().split("\n");
+        if (lines.length > 0) {
+          agentInfoModel.find().then(res => {
+            if (lines.length > res.length) {
+              //New agent is added
+
+            } else if (lines.length < res.length) {
+              //An agent is deleted
+              
+            } else {
+              
+            }
+          }, rej => {
+            console.log("Get agent info error: " + err);
+          })
+        } else {
+          //All agents are deleted
+        }
+        
+      })
+    }
+    else if (fPath.indexOf("/queue/agent-info/") > -1) {
+    
+    } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
+
+    } else if (fPath.indexOf("/queue/syscheck/") > -1) {
+
+    }
   })
   .on('unlink', function(fPath) {console.log('File', path, 'has been removed');})
   .on('error', function(error) {console.error('Error happened', error);})
+}
+
+//calling main
+async function main() {
+  readFilesFirst().then(watchFile);
+}
+
+main();
