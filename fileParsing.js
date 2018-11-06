@@ -27,7 +27,7 @@ var agentInfoSchema = Schema({
   config_sum: String,
   lastAlive: Date
 });
-agentInfoSchema.index({"id": 1, "name": 1});
+agentInfoSchema.index({"id": 1});
 var agentInfoModel = mongoose.model("agent", agentInfoSchema, "agent");
 
 // read files synchronously and get agent info
@@ -230,7 +230,9 @@ async function watchFile(){
 watcher
   .on('add', function(fPath, stat) {
     console.log("File ", fPath, " has been added")
-    if (fPath.indexOf("/queue/agent-info/") > -1) {
+    if (fPath.indexOf("/etc/client.keys") > -1) {
+
+    } else if (fPath.indexOf("/queue/agent-info/") > -1) {
     
     } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
 
@@ -241,8 +243,6 @@ watcher
   .on('change', function(fPath, stat) {
     console.log('File', path, 'has been changed');
     if (fPath.indexOf("/etc/client.keys")) {
-      //New agent is added
-      //Agent is deleted
 
       mongoose.connect(url + "/" + globalCollection);
       var db = mongoose.connection;
@@ -252,29 +252,88 @@ watcher
 
         try {
           data = fs.readFile(fPath, 'utf8');
+          var lines = data.trim().split("\n");
+          if (lines.length > 0) {
+            agentInfoModel.find().then(res => {
+              //Newly added or modified agents
+              var aAgentList = lines.filter(line => {
+                var id = line.toString().split(" ")[0];
+                var name = line.toString().split(" ")[1];
+                var found = res.find(agent => {
+                  return agent.id == id && agent.name == name
+                })
+                return (typeof found === 'undefined')
+              })
 
+              //Deleted agent
+              var dAgentList = res.filter(agent => {
+                var found = lines.find(line => {
+                  var id = line.toString().split(" ")[0];
+                  var name = line.toString().split(" ")[1];
+                  return agent.id == id && agent.name == name
+                })
+                return (typeof found === 'undefined')
+              })
+
+              //modify agent info
+              //add or update
+              aAgentList.forEach(line => {
+                var agentInfoArray = line.toString.split(' ');
+                var agentObj = {
+                  $set: {
+                    name: agentInfoArray[1],
+                    ip: agentInfoArray[2],
+                    key: agentInfoArray[3]
+                  },
+                  $setOnInsertl: {
+                    id: agentInfoArray[0],
+                  }
+                }
+                agentInfoModel.findOneAndUpdate({
+                  id: agentInfoArray[0]
+                }, agentObj, {
+                  new: true,
+                  upsert: true,
+
+                }, (err, doc, res) => {
+                  if (err) {
+                    console.log("Update Error: " + err)
+                  } else {
+                    // console.log(doc)
+                  }
+                })
+              })
+
+              //delete
+              dAgentList.forEach(agent => {
+                agentInfoModel.findOneAndDelete({
+                  id: agent.id
+                }, (err, res) => {
+                  if (err) {
+                    console.log("Delete Error: " + err)
+                  } else {
+                    // console.log(res);
+                  }
+                })
+              })
+            }, rej => {
+              console.log("Get agent info error: " + err);
+            })
+          } else {
+            //All agents are deleted
+            agentInfoModel.findOneAndDelete({}, (err, res) => {
+              if (err) {
+                console.log("Delete all error: " + err)
+              } else {
+                // console.log(res)
+              }
+            })
+          }
         } catch (error) {
           console.log("Read file error: " + error);
+        } finally {
+          db.close(); 
         }
-        var lines = data.trim().split("\n");
-        if (lines.length > 0) {
-          agentInfoModel.find().then(res => {
-            if (lines.length > res.length) {
-              //New agent is added
-
-            } else if (lines.length < res.length) {
-              //An agent is deleted
-              
-            } else {
-              
-            }
-          }, rej => {
-            console.log("Get agent info error: " + err);
-          })
-        } else {
-          //All agents are deleted
-        }
-        
       })
     }
     else if (fPath.indexOf("/queue/agent-info/") > -1) {
