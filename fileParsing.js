@@ -119,7 +119,7 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
           asyncForEach(dAgentList, deleteInfo);
 
           db.close();
-        }, rej => {
+        }, err => {
           console.log("Get agent info error: " + err);
         })
       } else {
@@ -150,14 +150,15 @@ async function updateAgentInfoFromFile(filePath) {
     }
   }
   try {
-    var data = fs.readFileSync(filePath, 'utf8');
+    var data = fs.readFileSync(filePath, 'utf8').trim();
     var filename = path.basename(filePath)
     var name = filename.split("-")[0];
     var ip = filename.split("-")[1];
 
     var os_arch = getOsArch(data)
     var mTime = fs.statSync(filePath).mtime;
-    var ossecVersionArr = data.split(" - ")[1].split(" / ").push("");
+    var ossecVersionArr = data.split(" - ")[1].split(" / ");
+    ossecVersionArr.push("")
     var version = ossecVersionArr[0];
     var configSum = ossecVersionArr[1];
 
