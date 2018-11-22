@@ -16,7 +16,6 @@ global
 
 ({agent_id})
 	pm_event (rootcheck - /queue/rootcheck)
-		id
 		date_first
 		date_last
 		log
@@ -32,10 +31,6 @@ global
 		gid
 		md5
 		sha1
-		uname
-		gname
-		mtime
-		inode
 	fim_file (along with fim_event)
 		id
 		path
