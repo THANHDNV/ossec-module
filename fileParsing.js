@@ -17,7 +17,9 @@ var childObj = {}
 
 var ossecDir = "/var/ossec";
 const rootcheckDir = ossecDir + "/queue/rootcheck/"
+// const rootcheckDir = "rootcheck/"
 const syscheckDir = ossecDir + "/queue/syscheck/"
+// const syscheckDir = "syscheck/"
 const filesAndDir = [ossecDir + "/etc/client.keys", ossecDir + "/queue/agent-info/", rootcheckDir, syscheckDir];
 
 //init mongoose schema and model
@@ -42,7 +44,7 @@ const agentRootcheckSchema = Schema({
   date_first: Date,
   date_last: Date,
   log: String,
-  pci_dss: Boolean 
+  pci_dss: String
 })
 const agentRootcheckModel = mongoose.model("rootcheck", agentRootcheckSchema, "pm_event")
 
@@ -60,8 +62,8 @@ const syscheckEventSchema = Schema({
   date: Date,
   size: Number,
   perm: Number,
-  uid: Number,
-  gid: Number,
+  uid: String,
+  gid: String,
   md5: String,
   sha1: String
 })
@@ -124,13 +126,10 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
                       new: true,
                       upsert: true,
                       setDefaultsOnInsert: true
-                    }).exec((err, res) => {
-                      if (err) {
-                        console.log("Update Error : " + err)
-                      } else {
-                        // console.log(res)
-                        resolve3()
-                      }
+                    }).exec().then(()=> {
+                      resolve3()
+                    }).catch(err => {
+                      console.log("Update Error : " + err + " - " + moment.now())
                     })
                   })
                 }
@@ -152,41 +151,50 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
                 }
 
                 async function asyncForEach(array, callback) {
-                  for (let index = 0; index < array.length; index++) {
-                    await callback(array[index])
-                  }
-                  Promise.resolve
+                  return new Promise((forResolve, forReject) => {
+                    async function main() {
+                      for (i=0;i<array.length;i++) {
+                        await callback(array[i])
+                      }
+                      forResolve()
+                    }
+
+                    main()
+                  })
                 }
-                asyncForEach(aAgentList, updateInfo);
-                //delete
-                asyncForEach(dAgentList, deleteInfo).then(findResolve);
+                asyncForEach(aAgentList, updateInfo).then(() => {
+                  //delete
+                  asyncForEach(dAgentList, deleteInfo).then(findResolve);
+                });
               })
             }).then(() => {
               resolve2()
             }).catch(error => {
               console.log("Find agent error: " + error)
+              reject2(error)
             })
           } else {
             //All agents are deleted
-            agentInfoModel.findOneAndDelete({}).exec((err, res) => {
-              if (err) {
-                console.log("Delete all error: " + err)
-              } else {
-                // console.log(res)
-                resolve2()
-              }
+            agentInfoModel.findOneAndDelete({}).exec().then(() => {
+              resolve2()
+            }).catch(error => {
+              console.log("Delete all error: " + err)
+              reject2(error)
             })
           }
         } catch (error) {
           console.log("Read file error: " + error);
+          reject2(error)
         }
       })
     }).then(() => {
+      // console.log("Closing db - " + moment.now())
       mongoose.connection.close().then(() => {
         resolve()
       })
     }).catch((err) => {
       console.log("Connection Error 1: " + err)
+      resolve()
     });
   })
 }
@@ -331,10 +339,16 @@ async function dropCollectionSync(db,name) {
       mongoose.connection.db.listCollections({name: name}).next((lErr, collection) => {
         if (lErr) {
           console.log('Unable to get collections list: ' + lErr)
-        } else {
-          if (collection) {
-            mongoose.connection.dropCollection(name)
-            res()
+        } else if (typeof collection !== 'undefined') {
+          if (collection != null && collection.name == name) {
+            console.log(collection.name + " - " + name + " - " + moment.now())
+            mongoose.connection.dropCollection(name).then(() => {
+              console.log("Drop collection " + name + " from " + db)
+              res()
+            }).catch((error) => {
+              console.log("Dropping " + collection + " Error: " + error + " - " + moment.now())
+              rej()
+            })
           }
         }
       })
@@ -342,143 +356,146 @@ async function dropCollectionSync(db,name) {
     })
   }).then(() => {
     mongoose.connection.close()
+  }).catch(reason => {
+    console.log("Connecting db for dropping collection Error: " + reason)
   })
 }
 
 //read rootcheck
 async function readRootcheck() {
   return new Promise((resolve, reject) => {
-    fs.exists(rootcheckDir, (exists) => {
-      if (exists) {
-  
-        fs.readdir(rootcheckDir, (err, filenames) => {
-          console.log("Reading rootcheck")
-          if (err) {
-            console.log("Read Rootcheck dir Error: " + err)
-          } else {
-            filenames.forEach(filename => {
-              filename = path.join(rootcheckDir, filename)
-              if (!fs.statSync(filename).isFile()) return
-              var agentDb = ""
-  
-              filename = path.basename(filename)
-              if (matchArr = filename.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>rootcheck$/)) {
-                var name = matchArr[1]
-                var ip = matchArr[2]
-  
-                //read client.keys to get agent id
-                var agentId = -1
-  
-                try {
-                  var clientsData = fs.readFileSync(ossecDir + "/etc/client.keys", 'utf8').trim();
-                  var clientsArr = clientsData.split("\n")
-                  var regex = new RegExp(name + ' ' + ip)
-                  for (index in clientsArr) {
-                    var line = clientsArr[index]
-                    if (line.search(regex) > -1) {
-                      var lineArr = line.split(" ")
-                      agentId = lineArr[0]
-                      break;
-                    }
-                  }
-  
-                  agentDb = agentId + "-" + name
-                } catch (error) {
-                  console.log("Read client.keys file error from rootcheck reading: " + error)
+    try {
+      var exist = fs.existsSync(rootcheckDir)
+      if (exist) {
+        filenames = fs.readdirSync(rootcheckDir)
+        for (index in filenames) {
+          var filename = filenames[index]
+          filename = path.join(rootcheckDir, filename)
+          if (!fs.statSync(filename).isFile()) continue
+          var agentDb = ""
+
+          filename = path.basename(filename)
+          if (matchArr = filename.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>rootcheck$/)) {
+            var name = matchArr[1]
+            var ip = matchArr[2]
+
+            //read client.keys to get agent id
+            var agentId = -1
+
+            try {
+              var clientsData = fs.readFileSync(ossecDir + "/etc/client.keys", 'utf8').trim();
+              var clientsArr = clientsData.split("\n")
+              var regex = new RegExp(name + ' ' + ip)
+              for (index in clientsArr) {
+                var line = clientsArr[index]
+                if (line.search(regex) > -1) {
+                  var lineArr = line.split(" ")
+                  agentId = lineArr[0]
+                  break;
                 }
-              } else if (matchArr = filename.match(/^rootcheck$/)){
-                agentDb = "000"
-              } else {
-                return
               }
 
-              dropCollectionSync(agentDb, 'pm_event')
-              filename = path.join(rootcheckDir, filename)
-              var child = child_process.spawn("tail", ["-f",'-n','+1', filename])
-              child.stdout.setMaxListeners(0)
-              var chunkLeftover = [""]
-              child.stdout.on('data', logDataChunk => {
-                console.log("got data")
-                child.stdout.pause()
-                //need to process chunk before becoming logData
-                logDataChunk = chunkLeftover.shift().concat(logDataChunk.toString())
-                if (logDataChunk[logDataChunk.length - 1] != '\n') {
-                    if ((index = logDataChunk.lastIndexOf('\n')) > -1) {
-                        chunkLeftover.push(logDataChunk.substring(index + 1))
-                        logDataChunk = logDataChunk.substring(0,index + 1)
-                    } else {
-                        chunkLeftover.push(logDataChunk)
-                        logDataChunk = ""
-                    }
-                } else {
-                  chunkLeftover.push("")
-                }
-                var logData = logDataChunk.toString().trim().split("\n")
-  
-                //process logData
-                var pm_event_arr = []
-                for (index in logData) {
-                  var line = logData[index].trim()
-                  if (line.length > 0) {
-                    var start_time_E = line.substr(1,10)
-                    var start_time = moment.unix(start_time_E).toDate()
-                    var end_time_E = line.substr(12, 10)
-                    var end_time = moment.unix(end_time_E).toDate()
-                    var log = line.substr(23)
-                    regex = new RegExp(/\{PCI_DSS\: ([^\}]+)\}/)
-                    var pci_dss = log.match(regex) ? log.match(regex)[1] : null
-  
-                    var event = {
-                      start_time: start_time,
-                      end_time: end_time,
-                      log: log,
-                      pci_dss: pci_dss
-                    }
-  
-                    pm_event_arr.push(event)
-                  }
-                }
-                mongoose.connect(url + "/" + agentDb).then(() => {
-                  return new Promise((connResolve, connReject) => {
-                    // console.log("Inserting rootcheck event to " + agentDb)
-                    agentRootcheckModel.insertMany(pm_event_arr).then(() => {
-                      mongoose.connection.close()
-                      connResolve()
-                    }).catch(error  => {
-                      console.log('Insert pm event error: ' + error)
-                      mongoose.connection.close()
-                      connReject()
-                    })
-                  })
-                }).catch(err => console.log("Connection Error: " + err))
-                child.stdout.resume()
-              })
-
-              child.on('close', code => {
-                console.log(code)
-              })
-  
-              childObj[filename] = child
-            })
+              agentDb = agentId + "-" + name
+            } catch (error) {
+              console.log("Read client.keys file error from rootcheck reading: " + error)
+            }
+          } else if (matchArr = filename.match(/^rootcheck$/)){
+            agentDb = "000"
+          } else {
+            continue
           }
-        })
+
+          dropCollectionSync(agentDb, 'pm_event')
+          filename = path.join(rootcheckDir, filename)
+          var child = child_process.spawn("tail", ["-f",'-n','+1', filename])
+          child.stdout.setMaxListeners(100)
+          var chunkLeftover = [""]
+          child.stdout.on('data', logDataChunk => {
+            // console.log("got data from a rootcheck file - " + agentDb)
+            child.stdout.pause()
+            //need to process chunk before becoming logData
+            logDataChunk = chunkLeftover.shift().concat(logDataChunk.toString())
+            if (logDataChunk[logDataChunk.length - 1] != '\n') {
+                if ((index = logDataChunk.lastIndexOf('\n')) > -1) {
+                    chunkLeftover.push(logDataChunk.substring(index + 1))
+                    logDataChunk = logDataChunk.substring(0,index + 1)
+                } else {
+                    chunkLeftover.push(logDataChunk)
+                    logDataChunk = ""
+                }
+            } else {
+              chunkLeftover.push("")
+            }
+            var logData = logDataChunk.toString().trim().split("\n")
+
+            //process logData
+            var pm_event_arr = []
+            for (index in logData) {
+              var line = logData[index].trim()
+              if (line.length > 0) {
+                var start_time_E = line.substr(1,10)
+                var start_time = moment.unix(start_time_E).toDate()
+                var end_time_E = line.substr(12, 10)
+                var end_time = moment.unix(end_time_E).toDate()
+                var log = line.substr(23)
+                regex = new RegExp(/\{PCI_DSS\: ([^\}]+)\}/)
+                var pci_dss = log.match(regex) ? log.match(regex)[1] : null
+
+                var event = {
+                  start_time: start_time,
+                  end_time: end_time,
+                  log: log,
+                  pci_dss: pci_dss
+                }
+
+                pm_event_arr.push(event)
+              }
+            }
+            mongoose.connect(url + "/" + agentDb).then(() => {
+              return new Promise((connResolve, connReject) => {
+                // console.log("Inserting rootcheck event to " + agentDb)
+                agentRootcheckModel.insertMany(pm_event_arr).then(() => {
+                  mongoose.connection.close(connResolve)
+                }).catch(error  => {
+                  console.log('Insert pm event error: ' + error)
+                  mongoose.connection.close().then(connReject)
+                })
+              })
+            }).then(() => {
+              child.stdout.resume()
+            }).catch(err => {
+              console.log("Connection Error: " + err)
+              child.stdout.resume()
+            })
+            
+          })
+
+          child.on('close', code => {
+            console.log(code)
+          })
+
+          childObj[filename] = child
+        }
+        console.log("Finish reading rootcheck - " + moment.now())
         resolve()
       } else {
         console.log("Rootcheck folder not exist")
         reject()
       }
-    })
+    } catch (existError) {
+      console.log("Unable to determine if rootcheck available or not: " + existError)
+    }
   })
 }
 
 async function saveObjSync(obj) {
-  var newObj = null
-  try {
-    newObj = await obj.save()
-  } catch (sError) {
-    console.log("Saving Error: " + sError)
-  }
-  return newObj
+  return new Promise((resolve, reject) => {
+    obj.save().then(newObj => {
+      resolve(newObj)
+    }).catch(sError => {
+      reject(sError)
+    })
+  })
 }
 
 //read syscheck
@@ -486,8 +503,8 @@ async function readSyscheck() {
   return new Promise((resolve, reject) => {
     fs.exists(syscheckDir, exists => {
       if (exists) {
-        
         fs.readdir(syscheckDir, (err, filenames) => {
+          console.log("Begin reading syscheck - " + moment.now())
           if (err) {
             console.log("Read Syscheck dir Error: " + err)
           } else {
@@ -544,10 +561,11 @@ async function readSyscheck() {
               
               filename = path.join(syscheckDir, filename)
               var child = child_process.spawn("tail", ["-f", '-n', '+1', filename])
-              child.stdout.setMaxListeners(0)
+              child.stdout.setMaxListeners(100)
               var chunkLeftover = [""]
   
               child.stdout.on('data', logDataChunk => {
+                console.log("got data from a syscheck file")
                 child.stdout.pause()
                 //need to process chunk before becoming logData
                 logDataChunk = chunkLeftover.shift().concat(logDataChunk.toString())
@@ -570,7 +588,7 @@ async function readSyscheck() {
                       var line = logData[index].toString().trim()
                       if (line.length > 0) {
                         // process line data 
-                        if (match = line.match(/^(([#\+\!]{3})(\d+):(\d+):(\d+):(\d+):([\w\d]+):([\w\d]+)|(\-1))\s\!(\d{10})\s(.+)$/)) {
+                        if (match = line.match(/^(([#\+\!]{3})(\d+):(\d+):([^:\s]+):(\d+):([\w\d]+):([\w\d]+)|(\-1))\s\!(\d{10})\s(.+)$/)) {
                           var eventCode = ""
                           var event = ""
                           var id_file = -1
@@ -603,49 +621,59 @@ async function readSyscheck() {
                           syscheckFileModel.findOne({
                             path: filePath,
                             type: type
-                          }).exec((findErr, findRes) => {
-                            if (findErr) {
-                              console.log("Find Error: " + findErr)
-                            } else if (findRes) {
-                              // have existed
-                              // look for the file events in db
-                              id_file = findRes._id
-                              syscheckEventModel.find({
-                                id_file: id_file
-                              }).sort({ _id: -1 }).limit(1).exec((fErr, docs) => {
-                                if (docs) {
-                                  // found last event of the file
-                                  //suppose to have 1 and only 1 doc
-                                  if (docs.length == 1) {
-                                    var doc = docs[0]
-                                    if (doc.event == "added" || doc.event == 'modified' || doc.event =='readded') {
-                                      event = 'modified'
-                                    } else {
-                                      event = 'readded'
+                          }).exec().then(findRes => {
+                            return new Promise((findResolve, findReject) => {
+                              if (findRes) {
+                                // have existed
+                                // look for the file events in db
+                                id_file = findRes._id
+                                syscheckEventModel.find({
+                                  id_file: id_file
+                                }).sort({ _id: -1 }).limit(1).exec((fErr, docs) => {
+                                  if (docs) {
+                                    // found last event of the file
+                                    //suppose to have 1 and only 1 doc
+                                    if (docs.length == 1) {
+                                      var doc = docs[0]
+                                      if (doc.event == "added" || doc.event == 'modified' || doc.event =='readded') {
+                                        event = 'modified'
+                                      } else {
+                                        event = 'readded'
+                                      }
                                     }
+                                  } else {
+                                    // no event was found - impossible since inserting into pim_file will also insert an event into fim_event
                                   }
-                                } else {
-                                  // no event was found - impossible since inserting into pim_file will also insert an event into fim_event
-                                }
-                              })
-                            } else {
-                              //file not existed in db
-                              if (eventCode[0] == "+" || (eventCode[0] == '#' && eventCode[1] == '+')) {
-                                event = "added"
+                                  findResolve()
+                                })
                               } else {
-                                event = "modified"
+                                //file not existed in db
+                                if (eventCode[0] == "+" || (eventCode[0] == '#' && eventCode[1] == '+')) {
+                                  event = "added"
+                                } else {
+                                  event = "modified"
+                                }
+                                //save new file to fim_file
+                                var newFimFile = new syscheckFileModel({
+                                  path: filePath,
+                                  type: type
+                                })
+                                // console.log('Inserting syscheck file to ' + agentDb)
+                                
+                                saveObjSync(newFimFile).then(fimFile => {
+                                  if (fimFile != null) {
+                                    id_file = fimFile._id
+                                  }
+                                }).then(() =>{
+                                  findResolve()
+                                }).catch((error) => {
+                                  console.log("Saving fimFile Error: " + error)
+                                  findReject(error)
+                                })
                               }
-                              //save new file to fim_file
-                              var newFimFile = new syscheckFileModel({
-                                path: filePath,
-                                type: type
-                              })
-                              // console.log('Inserting syscheck file to ' + agentDb)
-                              var fimFile = saveObjSync(newFimFile)
-                              if (fimFile) {
-                                id_file = fimFile._id
-                              }
-                            }
+                            })
+                          }).then(() => {
+                            console.log(id_file)
                             var newFimEvent = new syscheckEventModel({
                               file_id: id_file,
                               type: event,
@@ -658,7 +686,10 @@ async function readSyscheck() {
                               sha1: sha1
                             })
                             // console.log('Inserting syscheck event to ' + agentDb)
-                            saveObjSync(newFimEvent)
+                            saveObjSync(newFimEvent).then(fimEvent => console.log(fimEvent))
+                            .catch((error) => console.log("Insert fimEvent error: " + error))
+                          }).catch(findErr => {
+                            console.log("Find Error: " + findErr)
                           })
                         }
                       }
@@ -678,6 +709,7 @@ async function readSyscheck() {
             })
           }
         })
+        console.log("Finish reading syscheck - " + moment.now())
         resolve()
       } else {
         console.log("No syscheck folder")
@@ -729,7 +761,7 @@ async function readFilesFirst() {
         } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
           await readRootcheck()
         } else if (fPath.indexOf("/queue/syscheck/") > -1) {
-          await readSyscheck()
+          // await readSyscheck()
         }
       }
     }
