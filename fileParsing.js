@@ -42,7 +42,7 @@ const agentRootcheckSchema = Schema({
   date_first: Date,
   date_last: Date,
   log: String,
-  pci_dss: Boolean 
+  pci_dss: String
 })
 const agentRootcheckModel = mongoose.model("rootcheck", agentRootcheckSchema, "pm_event")
 
