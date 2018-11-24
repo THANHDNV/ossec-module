@@ -759,7 +759,7 @@ async function readFilesFirst() {
             console.log(error);
           }
         } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
-          await readRootcheck()
+          // await readRootcheck()
         } else if (fPath.indexOf("/queue/syscheck/") > -1) {
           // await readSyscheck()
         }
