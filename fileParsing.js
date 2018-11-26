@@ -94,6 +94,8 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
                   })
                   return (typeof found === 'undefined')
                 })
+                console.log("add agent")
+                console.log(aAgentList)
 
                 //Deleted agent
                 var dAgentList = res.filter(agent => {
@@ -104,6 +106,8 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
                   })
                   return (typeof found === 'undefined') && agent.id != "000"
                 })
+                console.log("delete agent")
+                console.log(dAgentList)
 
                 //modify agent info
                 //add or update
@@ -772,7 +776,7 @@ async function readFilesFirst() {
 // watcher will watch file asynchronously
 
 async function watchFile(){
-  var watcher = chokidar.watch(filesAndDir, {persistent: true});
+  var watcher = chokidar.watch(filesAndDir, {persistent: true, awaitWriteFinish: true, usePolling: true, atomic: true});
 
 watcher
   .on('add', function(fPath, stat) {
@@ -787,7 +791,7 @@ watcher
   })
   .on('change', function(fPath, stat) {
     //File on watcher list changed
-    console.log('File', path, 'has been changed');
+    console.log('File', fPath, 'has been changed');
     if (fPath.indexOf("/etc/client.keys")) {
       updateAgentBasicInfo()      
     }
