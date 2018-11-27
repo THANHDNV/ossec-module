@@ -94,8 +94,8 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
                   })
                   return (typeof found === 'undefined')
                 })
-                console.log("add agent")
-                console.log(aAgentList)
+                // console.log("add agent")
+                // console.log(aAgentList)
 
                 //Deleted agent
                 var dAgentList = res.filter(agent => {
@@ -106,8 +106,8 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
                   })
                   return (typeof found === 'undefined') && agent.id != "000"
                 })
-                console.log("delete agent")
-                console.log(dAgentList)
+                // console.log("delete agent")
+                // console.log(dAgentList)
 
                 //modify agent info
                 //add or update
