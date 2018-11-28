@@ -82,7 +82,7 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
           data = fs.readFileSync(fPath, 'utf8');
           var lines = data.trim().split("\n");
           // console.log(lines);
-          if (lines.length > 0) {
+          if (lines.length > 0 && line.match()) {
             agentInfoModel.find().then(res => {
               return new Promise((findResolve, findReject) => {
                 //Newly added or modified agents
@@ -92,7 +92,7 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
                   var found = res.find(agent => {
                     return agent.id == id && agent.name == name
                   })
-                  return (typeof found === 'undefined')
+                  return (typeof found === 'undefined') && line.match(/\d{3}\s\S+\s\S+\s\S+/)
                 })
                 // console.log("add agent")
                 // console.log(aAgentList)
@@ -104,7 +104,7 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
                     var name = line.toString().split(" ")[1];
                     return agent.id == id && agent.name == name
                   })
-                  return (typeof found === 'undefined') && agent.id != "000"
+                  return ((typeof found === 'undefined') && agent.id != "000") || !line.match(/\d{3}\s\S+\s\S+\s\S+/)
                 })
                 // console.log("delete agent")
                 // console.log(dAgentList)
