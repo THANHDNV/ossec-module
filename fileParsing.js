@@ -102,9 +102,9 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
                   var found = lines.find(line => {
                     var id = line.toString().split(" ")[0];
                     var name = line.toString().split(" ")[1];
-                    return agent.id == id && agent.name == name
+                    return agent.id == id && agent.name == name && line.match(/\d{3}\s\S+\s\S+\s\S+/)
                   })
-                  return ((typeof found === 'undefined') && agent.id != "000") || !line.match(/\d{3}\s\S+\s\S+\s\S+/)
+                  return ((typeof found === 'undefined') && agent.id != "000")
                 })
                 // console.log("delete agent")
                 // console.log(dAgentList)
