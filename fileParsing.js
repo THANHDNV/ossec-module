@@ -792,7 +792,7 @@ watcher
   .on('change', function(fPath, stat) {
     //File on watcher list changed
     console.log('File', fPath, 'has been changed');
-    if (fPath.indexOf("/etc/client.keys")) {
+    if (fPath.indexOf("/etc/client.keys") > -1) {
       updateAgentBasicInfo()      
     }
     else if (fPath.indexOf("/queue/agent-info/") > -1) {
