@@ -801,7 +801,7 @@ watcher
     }
   })
   .on('unlink', function(fPath) {
-    if (fPath.indexOf("/etc/client.keys")) {
+    if (fPath.indexOf("/etc/client.keys") > -1) {
       //impossible
 
     }
@@ -829,20 +829,20 @@ watcher
         })
       })
     } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
-      if (match = fPath.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>rootcheck$/)) {
-        childObj[fPath].kill()
+      // if (match = fPath.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>rootcheck$/)) {
+      //   childObj[fPath].kill()
 
-      } else if (fPath.match(/^$rootcheck/)) {
-        childObj[fPath].kill()
-        dropCollectionSync('000','pm_event')
-      }
+      // } else if (fPath.match(/^$rootcheck/)) {
+      //   childObj[fPath].kill()
+      //   dropCollectionSync('000','pm_event')
+      // }
       
     } else if (fPath.indexOf("/queue/syscheck/") > -1) {
-      if (match = fPath.match(/\(?([^)]+)\)?\s?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})?\-\>(syscheck|syscheck-registry)$/)) {
-        childObj[fPath].kill()
-      } else if (fPath.match(/^syscheck$/)) {
-        childObj[fPath].kill()
-      }
+      // if (match = fPath.match(/\(?([^)]+)\)?\s?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})?\-\>(syscheck|syscheck-registry)$/)) {
+      //   childObj[fPath].kill()
+      // } else if (fPath.match(/^syscheck$/)) {
+      //   childObj[fPath].kill()
+      // }
     }
     //file on watcher list deleted
     console.log('File', fPath, 'has been removed');
