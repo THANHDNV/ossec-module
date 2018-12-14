@@ -71,6 +71,7 @@ var syscheckEventPlugin = new mongooseAutoIncrementID(syscheckEventSchema, 'sysc
 syscheckEventPlugin.applyPlugin()
 const syscheckEventModel = mongoose.model('syscheck', syscheckEventSchema, 'fim_event')
 //agent CRUD
+
 async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
   return new Promise((resolve, reject) => {
     mongoose.connect(url + "/" + globalDb).then(() => {
@@ -365,9 +366,93 @@ async function dropCollectionSync(db,name) {
   })
 }
 
+//read rootcheck file
+async function readRootcheckFile(filename) {
+  return new Promise (async (resolve, reject) => {
+    try {
+      var agentDb = ""
+
+      var basename = path.basename(filename)
+      if (matchArr = basename.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>rootcheck$/)) {
+        var name = matchArr[1]
+        var ip = matchArr[2]
+
+        //read client.keys to get agent id
+        var agentId = -1
+
+        try {
+          var clientsData = fs.readFileSync(ossecDir + "/etc/client.keys", 'utf8').trim();
+          var clientsArr = clientsData.split("\n")
+          var regex = new RegExp(name + ' ' + ip)
+          for (index in clientsArr) {
+            var line = clientsArr[index]
+            if (line.search(regex) > -1) {
+              var lineArr = line.split(" ")
+              agentId = lineArr[0]
+              break;
+            }
+          }
+
+          agentDb = agentId + "-" + name
+        } catch (error) {
+          console.log("Read client.keys file error from rootcheck reading: " + error)
+        }
+      } else if (matchArr = basename.match(/^rootcheck$/)){
+        agentDb = "000"
+      } else {
+        resolve();
+      }
+
+      var logs = fs.readFileSync(filename, 'utf-8').trim();
+      var logData = logs.split('\n');
+
+      var pm_event_arr = []
+
+      for (index in logData) {
+        var line = logData[index].trim()
+        if (line.length > 0) {
+          var start_time_E = line.substr(1,10)
+          var start_time = moment.unix(start_time_E).toDate()
+          var end_time_E = line.substr(12, 10)
+          var end_time = moment.unix(end_time_E).toDate()
+          var log = line.substr(23)
+          regex = new RegExp(/\{PCI_DSS\: ([^\}]+)\}/)
+          var pci_dss = log.match(regex) ? log.match(regex)[1] : null
+
+          var event = {
+            start_time: start_time,
+            end_time: end_time,
+            log: log,
+            pci_dss: pci_dss
+          }
+
+          pm_event_arr.push(event)
+        }
+      }
+
+      mongoose.connect(url + "/" + agentDb).then(() => {
+        return new Promise((connResolve, connReject) => {
+          // console.log("Inserting rootcheck event to " + agentDb)
+          agentRootcheckModel.insertMany(pm_event_arr).then(() => {
+            
+          }).catch(error  => {
+            console.log('Insert pm event error: ' + error)
+            mongoose.connection.close().then(connReject)
+          })
+        })
+      }).catch(err => {
+        console.log("Connection Error: " + err)
+      })
+    } catch (error) {
+      console.log("Unable to read rootcheck file: " + error);
+      resolve();
+    }
+  }) 
+}
+
 //read rootcheck
 async function readRootcheck() {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     try {
       var exist = fs.existsSync(rootcheckDir)
       if (exist) {
@@ -376,109 +461,12 @@ async function readRootcheck() {
           var filename = filenames[index]
           filename = path.join(rootcheckDir, filename)
           if (!fs.statSync(filename).isFile()) continue
-          var agentDb = ""
 
-          filename = path.basename(filename)
-          if (matchArr = filename.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>rootcheck$/)) {
-            var name = matchArr[1]
-            var ip = matchArr[2]
+          await dropCollectionSync(agentDb, 'pm_event');
 
-            //read client.keys to get agent id
-            var agentId = -1
+          //reading file
 
-            try {
-              var clientsData = fs.readFileSync(ossecDir + "/etc/client.keys", 'utf8').trim();
-              var clientsArr = clientsData.split("\n")
-              var regex = new RegExp(name + ' ' + ip)
-              for (index in clientsArr) {
-                var line = clientsArr[index]
-                if (line.search(regex) > -1) {
-                  var lineArr = line.split(" ")
-                  agentId = lineArr[0]
-                  break;
-                }
-              }
-
-              agentDb = agentId + "-" + name
-            } catch (error) {
-              console.log("Read client.keys file error from rootcheck reading: " + error)
-            }
-          } else if (matchArr = filename.match(/^rootcheck$/)){
-            agentDb = "000"
-          } else {
-            continue
-          }
-
-          dropCollectionSync(agentDb, 'pm_event')
-          filename = path.join(rootcheckDir, filename)
-          var child = child_process.spawn("tail", ["-f",'-n','+1', filename])
-          child.stdout.setMaxListeners(100)
-          var chunkLeftover = [""]
-          child.stdout.on('data', logDataChunk => {
-            // console.log("got data from a rootcheck file - " + agentDb)
-            child.stdout.pause()
-            //need to process chunk before becoming logData
-            logDataChunk = chunkLeftover.shift().concat(logDataChunk.toString())
-            if (logDataChunk[logDataChunk.length - 1] != '\n') {
-                if ((index = logDataChunk.lastIndexOf('\n')) > -1) {
-                    chunkLeftover.push(logDataChunk.substring(index + 1))
-                    logDataChunk = logDataChunk.substring(0,index + 1)
-                } else {
-                    chunkLeftover.push(logDataChunk)
-                    logDataChunk = ""
-                }
-            } else {
-              chunkLeftover.push("")
-            }
-            var logData = logDataChunk.toString().trim().split("\n")
-
-            //process logData
-            var pm_event_arr = []
-            for (index in logData) {
-              var line = logData[index].trim()
-              if (line.length > 0) {
-                var start_time_E = line.substr(1,10)
-                var start_time = moment.unix(start_time_E).toDate()
-                var end_time_E = line.substr(12, 10)
-                var end_time = moment.unix(end_time_E).toDate()
-                var log = line.substr(23)
-                regex = new RegExp(/\{PCI_DSS\: ([^\}]+)\}/)
-                var pci_dss = log.match(regex) ? log.match(regex)[1] : null
-
-                var event = {
-                  start_time: start_time,
-                  end_time: end_time,
-                  log: log,
-                  pci_dss: pci_dss
-                }
-
-                pm_event_arr.push(event)
-              }
-            }
-            mongoose.connect(url + "/" + agentDb).then(() => {
-              return new Promise((connResolve, connReject) => {
-                // console.log("Inserting rootcheck event to " + agentDb)
-                agentRootcheckModel.insertMany(pm_event_arr).then(() => {
-                  mongoose.connection.close(connResolve)
-                }).catch(error  => {
-                  console.log('Insert pm event error: ' + error)
-                  mongoose.connection.close().then(connReject)
-                })
-              })
-            }).then(() => {
-              child.stdout.resume()
-            }).catch(err => {
-              console.log("Connection Error: " + err)
-              child.stdout.resume()
-            })
-            
-          })
-
-          child.on('close', code => {
-            console.log(code)
-          })
-
-          childObj[filename] = child
+          await readRootcheckFile(filename)
         }
         console.log("Finish reading rootcheck - " + moment.now())
         resolve()
@@ -488,6 +476,7 @@ async function readRootcheck() {
       }
     } catch (existError) {
       console.log("Unable to determine if rootcheck available or not: " + existError)
+      reject();
     }
   })
 }
@@ -793,11 +782,11 @@ watcher
     //File on watcher list changed
     console.log('File', fPath, 'has been changed');
     if (fPath.indexOf("/etc/client.keys") > -1) {
-      updateAgentBasicInfo()      
+      updateAgentBasicInfo()
     }
     else if (fPath.indexOf("/queue/agent-info/") > -1) {
       // agent info modified
-      updateAgentInfoFromFile(fPath);    
+      updateAgentInfoFromFile(fPath);
     }
   })
   .on('unlink', function(fPath) {
