@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const uname = require('node-uname')
 const child_process = require('child_process')
 const moment = require('moment')
-const mongooseAutoIncrementID = require('mongoose-auto-increment-reworked').MongooseAutoIncrementID
+const { MongooseAutoIncrementID } = require('mongoose-auto-increment-reworked')
 
 var url =  "mongodb://127.0.0.1:27017";
 var globalDb = "global";
@@ -40,19 +40,30 @@ var agentInfoSchema = Schema({
 agentInfoSchema.index({"id": 1});
 const agentInfoModel = mongoose.model("agent", agentInfoSchema, "agent");
 
+const options = {
+  field: '_id',
+  increment: 1,
+  nextCount: 'nextCount',
+  resetCount: false,
+  startAt: 1,
+  unique: false
+}
+
 const agentRootcheckSchema = Schema({
-  date_first: Date,
-  date_last: Date,
+  start_time: Date,
+  end_time: Date,
   log: String,
   pci_dss: String
 })
+var rootcheckFilePlugin = new MongooseAutoIncrementID(agentRootcheckSchema, 'agentRootcheckModel', options)
+rootcheckFilePlugin.applyPlugin()
 const agentRootcheckModel = mongoose.model("rootcheck", agentRootcheckSchema, "pm_event")
 
 const syscheckFileSchema = Schema({
   path: String,
   type: String
 })
-var syscheckFilePlugin = new mongooseAutoIncrementID(syscheckFileSchema, 'syscheck-file')
+var syscheckFilePlugin = new MongooseAutoIncrementID(syscheckFileSchema, 'syscheckFileModel', options)
 syscheckFilePlugin.applyPlugin()
 const syscheckFileModel = mongoose.model('syscheck-file', syscheckFileSchema, "fim_file")
 
@@ -67,16 +78,20 @@ const syscheckEventSchema = Schema({
   md5: String,
   sha1: String
 })
-var syscheckEventPlugin = new mongooseAutoIncrementID(syscheckEventSchema, 'syscheck')
+var syscheckEventPlugin = new MongooseAutoIncrementID(syscheckEventSchema, 'syscheckEventModel', options)
 syscheckEventPlugin.applyPlugin()
 const syscheckEventModel = mongoose.model('syscheck', syscheckEventSchema, 'fim_event')
+
+const counterInfoSchema = Schema({
+  rootcheck_counter: Number
+})
+
 //agent CRUD
 
 async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
   return new Promise((resolve, reject) => {
     mongoose.connect(url + "/" + globalDb).then(() => {
       return new Promise((resolve2, reject2) => {
-        var db = mongoose.connection;
         var data = "";
         // console.log(fPath)
         try {
@@ -193,7 +208,7 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
         }
       })
     }).then(() => {
-      // console.log("Closing db - " + moment.now())
+      console.log("Closing db at updateAgentBasicInfo - " + moment.now())
       mongoose.connection.close().then(() => {
         resolve()
       })
@@ -254,13 +269,13 @@ async function initManagerInfo(ossec_path= ossecDir) {
           })
         } catch (error) {
           console.log("Config File reading error: " + error)
-          db.close().then(() => reject())
+          console.log("Closing db at initManagerInfo inner - " + moment.now())
+          db.close().then(reject)
         }
       })
     }).then(() => {
-      mongoose.connection.close().then(() => {
-        resolve()
-      })
+      console.log("Closing db at initManagerInfo - " + moment.now())
+      mongoose.connection.close().then(resolve)
     }).catch((err) => {
       console.log("Connection Error 2: " + err)
     });
@@ -326,7 +341,8 @@ async function updateAgentInfoFromFile(filePath) {
           })
         })
       }).then(() => {
-        mongoose.connection.close().then(() => resolve())
+        console.log("Closing db at updateAgentInfoFromFile - " + moment.now())
+        mongoose.connection.close().then(resolve)
       }).catch(err => {
         console.log("Connection Error 3: " + err)
         resolve()
@@ -339,115 +355,148 @@ async function updateAgentInfoFromFile(filePath) {
 }
 
 async function dropCollectionSync(db,name) {
-  await mongoose.connect(url + "/" + db).then(() => {
-    return new Promise((res, rej) => {
-      mongoose.connection.db.listCollections({name: name}).next((lErr, collection) => {
-        if (lErr) {
-          console.log('Unable to get collections list: ' + lErr)
-        } else if (typeof collection !== 'undefined') {
-          if (collection != null && collection.name == name) {
-            console.log(collection.name + " - " + name + " - " + moment.now())
-            mongoose.connection.dropCollection(name).then(() => {
-              console.log("Drop collection " + name + " from " + db)
-              res()
-            }).catch((error) => {
-              console.log("Dropping " + collection + " Error: " + error + " - " + moment.now())
-              rej()
-            })
+  return new Promise((resolve, reject) => {
+    mongoose.connect(url + "/" + db).then(async () => {
+      console.log("Connected to " + url + "/" + db)
+      return new Promise((res, rej) => {
+        mongoose.connection.db.listCollections({name: name}).next((lErr, collection) => {
+          if (lErr) {
+            console.log('Unable to get collections list: ' + lErr)
+            rej();
+          } else if (typeof collection !== 'undefined') {
+            if (collection != null && collection.name == name) {
+              console.log(collection.name + " - " + name + " - " + moment.now())
+              mongoose.connection.db.dropCollection(name).then(() => {
+                console.log("Drop collection " + name + " from " + db)
+                mongoose.connection.close().then(res);
+              }).catch((error) => {
+                console.log("Dropping " + collection.name + " Error: " + error + " - " + moment.now())
+                rej()
+              })
+            } else {
+              console.log('Collection null');
+              res();
+            }
+          } else {
+            console.log("IDK")
+            res();
           }
-        }
+        })
       })
-      res()
+    }).then(() => {
+      console.log("Closing db at dropCollectionSync - " + moment.now())
+      mongoose.connection.close();
+      resolve();
+    }).catch(reason => {
+      console.log("Connecting db for dropping collection Error: " + reason)
+      resolve();
     })
-  }).then(() => {
-    mongoose.connection.close()
-  }).catch(reason => {
-    console.log("Connecting db for dropping collection Error: " + reason)
-  })
+  });
+}
+
+function getAgentDb(filename) {
+  var agentDb = ""
+  var basename = path.basename(filename)
+  if (matchArr = basename.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>rootcheck$/)) {
+    var name = matchArr[1]
+    var ip = matchArr[2]
+
+    //read client.keys to get agent id
+    var agentId = -1
+
+    try {
+      var clientsData = fs.readFileSync(ossecDir + "/etc/client.keys", 'utf8').trim();
+      var clientsArr = clientsData.split("\n")
+      var regex = new RegExp(name + ' ' + ip)
+      for (index in clientsArr) {
+        var line = clientsArr[index]
+        if (line.search(regex) > -1) {
+          var lineArr = line.split(" ")
+          agentId = lineArr[0]
+          break;
+        }
+      }
+
+      agentDb = agentId + "-" + name
+    } catch (error) {
+      console.log("Read client.keys file error from rootcheck reading: " + error)
+    }
+  } else if (matchArr = basename.match(/^rootcheck$/)){
+    agentDb = "000"
+  } else {
+  }
+  return agentDb;
 }
 
 //read rootcheck file
 async function readRootcheckFile(filename) {
-  return new Promise (async (resolve, reject) => {
+  return new Promise ((resolve, reject) => {
     try {
-      var agentDb = ""
+      agentDb = getAgentDb(filename);
+      if (agentDb != "") {
+        mongoose.connect(url + "/" + agentDb).then(() => {
+          return new Promise((connResolve, connReject) => {
+            // console.log("Inserting rootcheck event to " + agentDb)
+            agentRootcheckModel.nextCount().then(counter => {
+              return new Promise((cResolve, cReject) => {
+                var logs = fs.readFileSync(filename, 'utf-8').trim();
+                var logData = logs.split('\n');
 
-      var basename = path.basename(filename)
-      if (matchArr = basename.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>rootcheck$/)) {
-        var name = matchArr[1]
-        var ip = matchArr[2]
+                logData = logData.slice(counter - 1);
 
-        //read client.keys to get agent id
-        var agentId = -1
+                var pm_event_arr = []
 
-        try {
-          var clientsData = fs.readFileSync(ossecDir + "/etc/client.keys", 'utf8').trim();
-          var clientsArr = clientsData.split("\n")
-          var regex = new RegExp(name + ' ' + ip)
-          for (index in clientsArr) {
-            var line = clientsArr[index]
-            if (line.search(regex) > -1) {
-              var lineArr = line.split(" ")
-              agentId = lineArr[0]
-              break;
-            }
-          }
+                for (index in logData) {
+                  var line = logData[index].trim()
+                  if (line.length > 0) {
+                    var start_time_E = line.substr(1,10)
+                    var start_time = moment.unix(start_time_E).toDate()
+                    var end_time_E = line.substr(12, 10)
+                    var end_time = moment.unix(end_time_E).toDate()
+                    var log = line.substr(23)
+                    regex = new RegExp(/\{PCI_DSS\: ([^\}]+)\}/)
+                    var pci_dss = log.match(regex) ? log.match(regex)[1] : null
 
-          agentDb = agentId + "-" + name
-        } catch (error) {
-          console.log("Read client.keys file error from rootcheck reading: " + error)
-        }
-      } else if (matchArr = basename.match(/^rootcheck$/)){
-        agentDb = "000"
+                    var event = {
+                      start_time: start_time,
+                      end_time: end_time,
+                      log: log,
+                      pci_dss: pci_dss
+                    }
+
+                    pm_event_arr.push(event)
+                  }
+                }
+
+                agentRootcheckModel.insertMany(pm_event_arr).then(() => {
+                  console.log("Closing db at inserting pm-event " + agentDb + " - " + moment.now())
+                  mongoose.connection.close().then(cResolve);
+                }).catch(error  => {
+                  console.log('Insert pm event error: ' + error)
+                  mongoose.connection.close().then(cReject);
+                })
+              })
+            }).then(() => {
+              connResolve();
+            }).catch(error => {
+              console.log('Getting next rootcheck event counter error: ' + error)
+              mongoose.connection.close().then(connReject)
+            })
+          })
+        }).then(() => {
+          resolve();
+        }).catch(err => {
+          console.log("Connection Error: " + err)
+          resolve()
+        })
       } else {
         resolve();
       }
-
-      var logs = fs.readFileSync(filename, 'utf-8').trim();
-      var logData = logs.split('\n');
-
-      var pm_event_arr = []
-
-      for (index in logData) {
-        var line = logData[index].trim()
-        if (line.length > 0) {
-          var start_time_E = line.substr(1,10)
-          var start_time = moment.unix(start_time_E).toDate()
-          var end_time_E = line.substr(12, 10)
-          var end_time = moment.unix(end_time_E).toDate()
-          var log = line.substr(23)
-          regex = new RegExp(/\{PCI_DSS\: ([^\}]+)\}/)
-          var pci_dss = log.match(regex) ? log.match(regex)[1] : null
-
-          var event = {
-            start_time: start_time,
-            end_time: end_time,
-            log: log,
-            pci_dss: pci_dss
-          }
-
-          pm_event_arr.push(event)
-        }
-      }
-
-      mongoose.connect(url + "/" + agentDb).then(() => {
-        return new Promise((connResolve, connReject) => {
-          // console.log("Inserting rootcheck event to " + agentDb)
-          agentRootcheckModel.insertMany(pm_event_arr).then(() => {
-            
-          }).catch(error  => {
-            console.log('Insert pm event error: ' + error)
-            mongoose.connection.close().then(connReject)
-          })
-        })
-      }).catch(err => {
-        console.log("Connection Error: " + err)
-      })
     } catch (error) {
       console.log("Unable to read rootcheck file: " + error);
       resolve();
     }
-  }) 
+  })
 }
 
 //read rootcheck
@@ -461,12 +510,15 @@ async function readRootcheck() {
           var filename = filenames[index]
           filename = path.join(rootcheckDir, filename)
           if (!fs.statSync(filename).isFile()) continue
-
+          var agentDb = getAgentDb(filename);
+          console.log("ready to drop database " + agentDb + ": " + moment.now());
           await dropCollectionSync(agentDb, 'pm_event');
+          console.log('Dropped db');
 
           //reading file
-
+          console.log('Reading rootcheck file ' + moment.now())
           await readRootcheckFile(filename)
+          console.log('Finish reading rootcheck file ' + filename);
         }
         console.log("Finish reading rootcheck - " + moment.now())
         resolve()
@@ -739,20 +791,16 @@ async function readFilesFirst() {
             fileNames.forEach((filename, index) => {
               fileNames[index] = path.join(fPath, filename);
             })
-  
-            async function asyncForEach(array, callback) {
-              for (let index = 0; index < array.length; index++) {
-                console.log(index)
-                await callback(array[index])
-              }
+
+            for (index in fileNames) {
+              await updateAgentInfoFromFile(fileNames[index]);
             }
-  
-            asyncForEach(fileNames, updateAgentInfoFromFile);
+
           } catch (error) {
             console.log(error);
           }
         } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
-          // await readRootcheck()
+          await readRootcheck()
         } else if (fPath.indexOf("/queue/syscheck/") > -1) {
           // await readSyscheck()
         }
@@ -768,28 +816,30 @@ async function watchFile(){
   var watcher = chokidar.watch(filesAndDir, {persistent: true, awaitWriteFinish: true, usePolling: true, atomic: true});
 
 watcher
-  .on('add', function(fPath, stat) {
+  .on('add',async function(fPath, stat) {
     //File is added to watcher list
     console.log("File ", fPath, " has been added")
     if (fPath.indexOf("/etc/client.keys") > -1) {
 
     } else if (fPath.indexOf("/queue/agent-info/") > -1) {
       //Add new agent info
-      updateAgentInfoFromFile(fPath);
+      await updateAgentInfoFromFile(fPath);
     }
   })
-  .on('change', function(fPath, stat) {
+  .on('change',async function(fPath, stat) {
     //File on watcher list changed
     console.log('File', fPath, 'has been changed');
     if (fPath.indexOf("/etc/client.keys") > -1) {
-      updateAgentBasicInfo()
+      await updateAgentBasicInfo()
     }
     else if (fPath.indexOf("/queue/agent-info/") > -1) {
       // agent info modified
-      updateAgentInfoFromFile(fPath);
+      await updateAgentInfoFromFile(fPath);
+    } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
+      await readRootcheckFile(fPath);
     }
   })
-  .on('unlink', function(fPath) {
+  .on('unlink',async function(fPath) {
     if (fPath.indexOf("/etc/client.keys") > -1) {
       //impossible
 
@@ -825,7 +875,6 @@ watcher
       //   childObj[fPath].kill()
       //   dropCollectionSync('000','pm_event')
       // }
-      
     } else if (fPath.indexOf("/queue/syscheck/") > -1) {
       // if (match = fPath.match(/\(?([^)]+)\)?\s?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})?\-\>(syscheck|syscheck-registry)$/)) {
       //   childObj[fPath].kill()
