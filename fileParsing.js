@@ -9,6 +9,7 @@ const uname = require('node-uname')
 const child_process = require('child_process')
 const moment = require('moment')
 const { MongooseAutoIncrementID } = require('mongoose-auto-increment-reworked')
+const os = require("os");
 
 var url =  "mongodb://127.0.0.1:27017";
 var globalDb = "global";
@@ -68,7 +69,7 @@ const syscheckFileSchema = Schema({
 const syscheckFileModel = mongoose.model('syscheck-file', syscheckFileSchema, "fim_file")
 
 const syscheckEventSchema = Schema({
-  file_id: Number,
+  file_id: Object,
   type: String,
   date: Date,
   size: Number,
@@ -82,11 +83,15 @@ const syscheckEventSchema = Schema({
 // syscheckEventPlugin.applyPlugin()
 const syscheckEventModel = mongoose.model('syscheck', syscheckEventSchema, 'fim_event')
 
-const counterInfoSchema = Schema({
+const pmCounterInfoSchema = Schema({
   pm_event_counter: {
     type: Number,
     default: 0
-  },
+  }
+})
+const pmCounterInfoModel = mongoose.model('pmCounterInfo', pmCounterInfoSchema, 'pmCounterInfo');
+
+const fimCounterInfoSchema = Schema({
   fim_event_counter: {
     type: Number,
     default: 0
@@ -96,7 +101,7 @@ const counterInfoSchema = Schema({
     default: 0
   }
 })
-const counterInfoModel = mongoose.model('counterInfo', counterInfoSchema, 'counterInfo');
+const fimCounterInfoModel = mongoose.model('fimCounterInfo', fimCounterInfoSchema, 'fimCounterInfo');
 
 //agent CRUD
 
@@ -108,7 +113,7 @@ async function updateAgentBasicInfo(fPath = ossecDir + "/etc/client.keys") {
         // console.log(fPath)
         try {
           data = fs.readFileSync(fPath, 'utf8');
-          var lines = data.trim().split("\n");
+          var lines = data.trim().split(/\r?\n/);
           // console.log(lines);
           if (lines.length > 0 && line.match()) {
             agentInfoModel.find().then(res => {
@@ -396,7 +401,7 @@ async function dropCollectionSync(db,name) {
         })
       })
     }).then(() => {
-      console.log("Closing db at dropCollectionSync - " + moment.now())
+      console.log("Closing db at dropCollectionSync - " + db + "/" + name + " - " + moment.now())
       mongoose.connection.close();
       resolve();
     }).catch(reason => {
@@ -449,20 +454,22 @@ async function readRootcheckFile(filename) {
         mongoose.connect(url + "/" + agentDb).then(() => {
           return new Promise((connResolve, connReject) => {
             // console.log("Inserting rootcheck event to " + agentDb)
-            counterInfoModel.findOne().exec().then(counterInfo => {
+            pmCounterInfoModel.findOne().exec().then(pmCounterInfo => {
               return new Promise((countFindResolve, countFindReject) => {
                 var rCount = 0;
-                if (counterInfo) {
-                  rCount = counterInfo.pm_event_counter;
+                if (pmCounterInfo) {
+                  rCount = pmCounterInfo.pm_event_counter;
                 }
+                console.log("rCount: " + rCount);
                 var logs = fs.readFileSync(filename, 'utf-8').trim();
-                var logData = logs.split('\n');
-
-                logData = logData.slice(rCount);
-
+                
+                var logData = logs.split(/[\r\n]+/);
+                
+                var logDataArr = logData.slice(rCount);
+                console.log(logDataArr[0]);
                 var pm_event_arr = []
-
-                for (index in logData) {
+                
+                for (index in logDataArr) {
                   var line = logData[index].trim()
                   if (line.length > 0) {
                     var start_time_E = line.substr(1,10)
@@ -483,10 +490,10 @@ async function readRootcheckFile(filename) {
                     pm_event_arr.push(event)
                   }
                 }
-
+                console.log(pm_event_arr.length);
                 agentRootcheckModel.insertMany(pm_event_arr).then(() => {
                   console.log("Closing db at inserting pm-event " + agentDb + " - " + moment.now())
-                  counterInfoModel.findOneAndUpdate({}, {$inc: { pm_event_counter: pm_event_arr.length} }, {
+                  pmCounterInfoModel.findOneAndUpdate({}, {$inc: { pm_event_counter: pm_event_arr.length} }, {
                     new: true,
                     upsert: true,
                     setDefaultsOnInsert: true
@@ -535,14 +542,17 @@ async function readRootcheck() {
           filename = path.join(rootcheckDir, filename)
           if (!fs.statSync(filename).isFile()) continue
           var agentDb = getAgentDbFromRootcheckFile(filename);
-          console.log("ready to drop database " + agentDb + ": " + moment.now());
-          await dropCollectionSync(agentDb, 'pm_event');
-          console.log('Dropped db');
+          if (agentDb != '') {
+            console.log("ready to drop database " + agentDb + ": " + moment.now());
+            await dropCollectionSync(agentDb, 'pm_event');
+            await dropCollectionSync(agentDb, 'pmCounterInfo');
+            console.log('Dropped db');
 
-          //reading file
-          console.log('Reading rootcheck file ' + moment.now())
-          await readRootcheckFile(filename)
-          console.log('Finish reading rootcheck file ' + filename);
+            //reading file
+            console.log('Reading rootcheck file ' + moment.now())
+            await readRootcheckFile(filename)
+            console.log('Finish reading rootcheck file ' + filename);
+          }
         }
         console.log("Finish reading rootcheck - " + moment.now())
         resolve()
@@ -557,23 +567,13 @@ async function readRootcheck() {
   })
 }
 
-async function saveObjSync(obj) {
-  return new Promise((resolve, reject) => {
-    obj.save().then(newObj => {
-      resolve(newObj)
-    }).catch(sError => {
-      reject(sError)
-    })
-  })
-}
-
 function getAgentDbFromSyscheckFile(filename) {
   var agentDb = ""
   var basename = path.basename(filename)
-  if (matchArr = filename.match(/\(?([^)]+)\)?\s?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})?\-\>(syscheck|syscheck-registry)$/)) {
+  if (matchArr = basename.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>(syscheck|syscheck-registry)$/)) {
     var name = matchArr[1]
     var ip = matchArr[2]
-    var type = matchArr[3]
+    
 
     //read client.keys to get agent id
     var agentId = -1
@@ -601,7 +601,7 @@ function getAgentDbFromSyscheckFile(filename) {
     } catch (error) {
       console.log("Read client.keys file error from syscheck reading: " + error)
     }
-  } else if (matchArr = filename.match(/^syscheck$/)){
+  } else if (matchArr = basename.match(/^syscheck$/)){
     agentDb = "000"
   } else {
   }
@@ -612,48 +612,223 @@ async function readSyscheckFile(filename) {
   return new Promise ((resolve, reject) => {
     try {
       agentDb = getAgentDbFromSyscheckFile(filename);
+      
       if (agentDb != "") {
+        var basename = path.basename(filename)
+        var type = '';
+        if (matchArr = basename.match(/\(([^)]+)\)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\-\>(syscheck|syscheck-registry)$/)) {
+          type = matchArr[3]
+        } else if (matchArr = basename.match(/^syscheck$/)){
+          type = 'syscheck'
+        }
         mongoose.connect(url + "/" + agentDb).then(() => {
           return new Promise((connResolve, connReject) => {
             // console.log("Inserting Syscheck event to " + agentDb)
-            counterInfoModel.findOne().exec().then(counterInfo => {
-              return new Promise((countFindResolve, countFindReject) => {
+            fimCounterInfoModel.findOne().exec().then(fimCounterInfo => {
+              return new Promise(async (countFindResolve, countFindReject) => {
                 var rCount = 0;
-                if (counterInfo) {
-                  rCount = counterInfo.pm_event_counter;
+                if (fimCounterInfo) {
+                  rCount = fimCounterInfo.fim_event_counter;
                 }
                 var logs = fs.readFileSync(filename, 'utf-8').trim();
                 var logData = logs.split('\n');
 
                 logData = logData.slice(rCount);
 
-                var pm_event_arr = []
+                var fim_event_arr = []
 
                 for (index in logData) {
                   var line = logData[index].trim()
                   if (line.length > 0) {
-                    var start_time_E = line.substr(1,10)
-                    var start_time = moment.unix(start_time_E).toDate()
-                    var end_time_E = line.substr(12, 10)
-                    var end_time = moment.unix(end_time_E).toDate()
-                    var log = line.substr(23)
-                    regex = new RegExp(/\{PCI_DSS\: ([^\}]+)\}/)
-                    var pci_dss = log.match(regex) ? log.match(regex)[1] : null
+                    // process line data 
+                    if (match = line.match(/^(([#\+\!]{3})(\d+):(\d+):([^:\s]+):(\d+):([\w\d]+):([\w\d]+)|(\-1))\s\!(\d{10})\s(.+)$/)) {
+                      
+                      var eventCode = ""
+                      var event = ""
+                      var id_file = -1
+                      var size = null
+                      var perm = null
+                      var uid = null
+                      var gid = null
+                      var md5 = null
+                      var sha1 = null
+                      var time_E = match[10]
+                      var time = moment.unix(time_E).toDate()
+                      var filePath = match[11]
+                      if (attr = match[1].match(/^([#\+\!]{3})(\d+):(\d+):(\d+):(\d+):([\w\d]+):([\w\d]+)/)) {
+                        //not delete event
+                        eventCode = attr[1]
+                        size = attr[2]
+                        perm = attr[3]
+                        uid = attr[4]
+                        gid = attr[5]
+                        md5 = attr[6]
+                        sha1 = attr[7]
+                      } else if (attr = match[1].match(/^[\+#!]*\-1/)) {
+                        //delete event
+                        eventCode = '-1'
+                        event = 'deleted'
+                      }
 
-                    var event = {
-                      start_time: start_time,
-                      end_time: end_time,
-                      log: log,
-                      pci_dss: pci_dss
+                      //look for file
+                      //get id_file and event
+                      //this part is not synchronouse
+
+                      try {
+                        var findRes = await syscheckFileModel.findOne({
+                          path: filePath,
+                          type: type
+                        }).exec();
+                        if (findRes) {
+                          // have existed
+                          // look for the file events in db
+                          id_file = findRes._id
+
+                          var docs = await syscheckEventModel.find({
+                            id_file: id_file
+                          }).sort({ _id: -1 }).limit(1).exec();
+                          if (docs) {
+                            // found last event of the file
+                            //suppose to have 1 and only 1 doc
+                            if (docs.length == 1) {
+                              var doc = docs[0]
+                              if (doc.event == "added" || doc.event == 'modified' || doc.event =='readded') {
+                                event = 'modified'
+                              } else {
+                                event = 'readded'
+                              }
+                            }
+                          } else {
+                            // no event was found - impossible since inserting into pim_file will also insert an event into fim_event
+                          }
+                        } else {
+                          //file not existed in db
+                          if (eventCode[0] == "+" || (eventCode[0] == '#' && eventCode[1] == '+')) {
+                            event = "added"
+                          } else {
+                            event = "modified"
+                          }
+                          //save new file to fim_file
+                          var newFimFile = new syscheckFileModel({
+                            path: filePath,
+                            type: type
+                          })
+                          // console.log('Inserting syscheck file to ' + agentDb)
+                          var fimFile = await newFimFile.save();
+                          if (fimFile != null) {
+                            id_file = fimFile._id
+                          }
+                          var fimCounterInfo = await fimCounterInfoModel.findOneAndUpdate({}, {$inc: { fim_file_counter: 1} }, {
+                            new: true,
+                            upsert: true,
+                            setDefaultsOnInsert: true
+                          }).exec();
+                        }
+                        var newFimEvent = {
+                          file_id: id_file,
+                          type: event,
+                          date: time,
+                          size: size,
+                          perm: perm,
+                          uid: uid,
+                          gid: gid,
+                          md5: md5,
+                          sha1: sha1
+                        }
+                        fim_event_arr.push(newFimEvent);
+                      } catch (findErr) {
+                        console.log("Find Error: " + findErr)
+                      }
+
+                      // syscheckFileModel.findOne({
+                      //   path: filePath,
+                      //   type: type
+                      // }).exec().then(findRes => {
+                      //   return new Promise((findResolve, findReject) => {
+                      //     if (findRes) {
+                      //       // have existed
+                      //       // look for the file events in db
+                      //       id_file = findRes._id
+                      //       syscheckEventModel.find({
+                      //         id_file: id_file
+                      //       }).sort({ _id: -1 }).limit(1).exec().then((docs) => {
+                      //         if (docs) {
+                      //           // found last event of the file
+                      //           //suppose to have 1 and only 1 doc
+                      //           if (docs.length == 1) {
+                      //             var doc = docs[0]
+                      //             if (doc.event == "added" || doc.event == 'modified' || doc.event =='readded') {
+                      //               event = 'modified'
+                      //             } else {
+                      //               event = 'readded'
+                      //             }
+                      //           }
+                      //         } else {
+                      //           // no event was found - impossible since inserting into pim_file will also insert an event into fim_event
+                      //         }
+                      //         findResolve()
+                      //       }).catch(fErr => {
+                      //         console.log("Find fim file error: " + fErr)
+                      //         findReject(fErr);
+                      //       })
+                      //     } else {
+                      //       //file not existed in db
+                      //       if (eventCode[0] == "+" || (eventCode[0] == '#' && eventCode[1] == '+')) {
+                      //         event = "added"
+                      //       } else {
+                      //         event = "modified"
+                      //       }
+                      //       //save new file to fim_file
+                      //       var newFimFile = new syscheckFileModel({
+                      //         path: filePath,
+                      //         type: type
+                      //       })
+                      //       // console.log('Inserting syscheck file to ' + agentDb)
+                            
+                      //       newFimFile.save().then(fimFile => {
+                      //         return new Promise((sResolve, sReject) => {
+                      //           if (fimFile != null) {
+                      //             id_file = fimFile._id
+                      //           }
+                      //           fimCounterInfoModel.findOneAndUpdate({}, {$inc: { fim_file_counter: 1} }, {
+                      //             new: true,
+                      //             upsert: true,
+                      //             setDefaultsOnInsert: true
+                      //           }).exec().then((fimCounterInfo) => {
+                                  
+                      //             sResolve();
+                      //           }).catch(sReject);
+                      //         })
+                      //       }).then(findResolve).catch(sError => {
+                      //         console.log("Unable to save fimFile: " + sError);
+                      //         findReject(sError);
+                      //       })
+                      //     }
+                      //   })
+                      // }).then(() => {
+                      //   var newFimEvent = {
+                      //     file_id: id_file,
+                      //     type: event,
+                      //     date: time,
+                      //     size: size,
+                      //     perm: perm,
+                      //     uid: uid,
+                      //     gid: gid,
+                      //     md5: md5,
+                      //     sha1: sha1
+                      //   }
+                      //   fim_event_arr.push(newFimEvent);
+                      // }).catch(findErr => {
+                      //   console.log("Find Error: " + findErr)
+                      // })
                     }
-
-                    pm_event_arr.push(event)
                   }
                 }
-
-                agentSyscheckModel.insertMany(pm_event_arr).then(() => {
-                  console.log("Closing db at inserting pm-event " + agentDb + " - " + moment.now())
-                  counterInfoModel.findOneAndUpdate({}, {$inc: { pm_event_counter: pm_event_arr.length} }, {
+                console.log('Add all line from file ' + filename + ' - ' + moment.now())
+                console.log(fim_event_arr.length)
+                syscheckEventModel.insertMany(fim_event_arr).then(() => {
+                  console.log("Closing db at inserting fim-event " + agentDb + " - " + moment.now())
+                  fimCounterInfoModel.findOneAndUpdate({}, {$inc: { fim_event_counter: fim_event_arr.length} }, {
                     new: true,
                     upsert: true,
                     setDefaultsOnInsert: true
@@ -661,11 +836,11 @@ async function readSyscheckFile(filename) {
                     console.log(res + " - " + moment.now())
                     mongoose.connection.close().then(countFindResolve);
                   }).catch(incError => {
-                    console.log("Increase pm_event counter error: " + incError);
+                    console.log("Increase fim_event counter error: " + incError);
                     mongoose.connection.close().then(countFindReject);
                   })
                 }).catch(error  => {
-                  console.log('Insert pm event error: ' + error)
+                  console.log('Insert fim event error: ' + error)
                   mongoose.connection.close().then(countFindReject);
                 })
               })
@@ -692,188 +867,41 @@ async function readSyscheckFile(filename) {
 
 //read syscheck
 async function readSyscheck() {
-  return new Promise((resolve, reject) => {
-    fs.exists(syscheckDir, exists => {
-      if (exists) {
-        fs.readdir(syscheckDir, (err, filenames) => {
-          console.log("Begin reading syscheck - " + moment.now())
-          if (err) {
-            console.log("Read Syscheck dir Error: " + err)
-          } else {
-            filenames.forEach(filename => {
-              filename = path.join(syscheckDir, filename)
-              if (!fs.statSync(filename).isFile()) continue
-              var agentDb = getAgentDbFromSyscheckFile(filename);
-  
-              dropCollectionSync(agentDb, 'fim_event').then(() => {
-                dropCollectionSync(agentDb, 'fim_file')
-              })
-              
-              
-              filename = path.join(syscheckDir, filename)
-              var child = child_process.spawn("tail", ["-f", '-n', '+1', filename])
-              child.stdout.setMaxListeners(100)
-              var chunkLeftover = [""]
-  
-              child.stdout.on('data', logDataChunk => {
-                console.log("got data from a syscheck file")
-                child.stdout.pause()
-                //need to process chunk before becoming logData
-                logDataChunk = chunkLeftover.shift().concat(logDataChunk.toString())
-                if (logDataChunk[logDataChunk.length - 1] != '\n') {
-                    if ((index = logDataChunk.lastIndexOf('\n')) > -1) {
-                        chunkLeftover.push(logDataChunk.substring(index + 1))
-                        logDataChunk = logDataChunk.substring(0,index + 1)
-                    } else {
-                        chunkLeftover.push(logDataChunk)
-                        logDataChunk = ""
-                    }
-                }
-                var logData = logDataChunk.toString().trim().split("\n")
-  
-                mongoose.connect(url + "/" + agentDb).then(() => {
-                  return new Promise((connResolve, connReject) => {
-                    var db = mongoose.connection
-                    for (index in logData) {
-                    
-                      var line = logData[index].toString().trim()
-                      if (line.length > 0) {
-                        // process line data 
-                        if (match = line.match(/^(([#\+\!]{3})(\d+):(\d+):([^:\s]+):(\d+):([\w\d]+):([\w\d]+)|(\-1))\s\!(\d{10})\s(.+)$/)) {
-                          var eventCode = ""
-                          var event = ""
-                          var id_file = -1
-                          var size = null
-                          var perm = null
-                          var uid = null
-                          var gid = null
-                          var md5 = null
-                          var sha1 = null
-                          var time_E = match[10]
-                          var time = moment.unix(time_E).toDate()
-                          var filePath = match[11]
-                          if (attr = match[1].match(/^([#\+\!]{3})(\d+):(\d+):(\d+):(\d+):([\w\d]+):([\w\d]+)/)) {
-                            //not delete event
-                            eventCode = attr[1]
-                            size = attr[2]
-                            perm = attr[3]
-                            uid = attr[4]
-                            gid = attr[5]
-                            md5 = attr[6]
-                            sha1 = attr[7]
-                          } else if (attr = match[1].match(/^[\+#!]*\-1/)) {
-                            //delete event
-                            eventCode = '-1'
-                            event = 'deleted'
-                          }
-    
-                          //look for file
-                          //get id_file and event
-                          syscheckFileModel.findOne({
-                            path: filePath,
-                            type: type
-                          }).exec().then(findRes => {
-                            return new Promise((findResolve, findReject) => {
-                              if (findRes) {
-                                // have existed
-                                // look for the file events in db
-                                id_file = findRes._id
-                                syscheckEventModel.find({
-                                  id_file: id_file
-                                }).sort({ _id: -1 }).limit(1).exec((fErr, docs) => {
-                                  if (docs) {
-                                    // found last event of the file
-                                    //suppose to have 1 and only 1 doc
-                                    if (docs.length == 1) {
-                                      var doc = docs[0]
-                                      if (doc.event == "added" || doc.event == 'modified' || doc.event =='readded') {
-                                        event = 'modified'
-                                      } else {
-                                        event = 'readded'
-                                      }
-                                    }
-                                  } else {
-                                    // no event was found - impossible since inserting into pim_file will also insert an event into fim_event
-                                  }
-                                  findResolve()
-                                })
-                              } else {
-                                //file not existed in db
-                                if (eventCode[0] == "+" || (eventCode[0] == '#' && eventCode[1] == '+')) {
-                                  event = "added"
-                                } else {
-                                  event = "modified"
-                                }
-                                //save new file to fim_file
-                                var newFimFile = new syscheckFileModel({
-                                  path: filePath,
-                                  type: type
-                                })
-                                // console.log('Inserting syscheck file to ' + agentDb)
-                                
-                                saveObjSync(newFimFile).then(fimFile => {
-                                  if (fimFile != null) {
-                                    id_file = fimFile._id
-                                  }
-                                }).then(() =>{
-                                  findResolve()
-                                }).catch((error) => {
-                                  console.log("Saving fimFile Error: " + error)
-                                  findReject(error)
-                                })
-                              }
-                            })
-                          }).then(() => {
-                            console.log(id_file)
-                            var newFimEvent = new syscheckEventModel({
-                              file_id: id_file,
-                              type: event,
-                              date: time,
-                              size: size,
-                              perm: perm,
-                              uid: uid,
-                              gid: gid,
-                              md5: md5,
-                              sha1: sha1
-                            })
-                            // console.log('Inserting syscheck event to ' + agentDb)
-                            saveObjSync(newFimEvent).then(fimEvent => console.log(fimEvent))
-                            .catch((error) => console.log("Insert fimEvent error: " + error))
-                          }).catch(findErr => {
-                            console.log("Find Error: " + findErr)
-                          })
-                        }
-                      }
-                    }
-                    connResolve()
-                  })
-                }).then(() => {
-                  mongoose.connection.close()
-                }).catch(reason => {
-                  console.log("Connect Db Error: " + reason)
-                })
-                //continue the stream
-                child.stdout.resume()
-              })
-  
-              childObj[filename] = child
-            })
+  return new Promise(async (resolve, reject) => {
+    try {
+      var exist = fs.existsSync(syscheckDir);
+      if (exist) {
+        filenames = fs.readdirSync(syscheckDir)
+        for (index in filenames) {
+          var filename = filenames[index]
+          filename = path.join(syscheckDir, filename)
+          if (!fs.statSync(filename).isFile()) continue
+          var agentDb = getAgentDbFromSyscheckFile(filename);
+          if (agentDb != '') {
+            await dropCollectionSync(agentDb, 'fim_event');
+            await dropCollectionSync(agentDb, 'fim_file');
+            await dropCollectionSync(agentDb, 'fimCounterInfo');
+            
+            await readSyscheckFile(filename);
           }
-        })
+        }
         console.log("Finish reading syscheck - " + moment.now())
         resolve()
       } else {
-        console.log("No syscheck folder")
+        console.log("Syscheck folder not exist")
         reject()
       }
-    })
+    } catch (existError) {
+      console.log("Unable to determine if syscheck available or not: " + existError)
+      reject();
+    }
   })
 }
 
 // read files synchronously and get agent info
 async function readFilesFirst() {
   await initManagerInfo();
-
+  
   for (index in filesAndDir) {
     var fPath = filesAndDir[index]
     {
@@ -908,7 +936,7 @@ async function readFilesFirst() {
         } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
           await readRootcheck()
         } else if (fPath.indexOf("/queue/syscheck/") > -1) {
-          // await readSyscheck()
+          await readSyscheck()
         }
       }
     }
@@ -981,6 +1009,8 @@ watcher
       //   childObj[fPath].kill()
       //   dropCollectionSync('000','pm_event')
       // }
+      await dropCollectionSync(agentDb, 'pm_event');
+      await dropCollectionSync(agentDb, 'pmCounterInfo');
     } else if (fPath.indexOf("/queue/syscheck/") > -1) {
       // if (match = fPath.match(/\(?([^)]+)\)?\s?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})?\-\>(syscheck|syscheck-registry)$/)) {
       //   childObj[fPath].kill()
