@@ -51,8 +51,8 @@ const options = {
 }
 
 const agentRootcheckSchema = Schema({
-  start_time: Date,
-  end_time: Date,
+  date_first: Date,
+  date_last: Date,
   log: String,
   pci_dss: String
 })
@@ -481,8 +481,8 @@ async function readRootcheckFile(filename) {
                     var pci_dss = log.match(regex) ? log.match(regex)[1] : null
 
                     var event = {
-                      start_time: start_time,
-                      end_time: end_time,
+                      date_first: start_time,
+                      date_last: end_time,
                       log: log,
                       pci_dss: pci_dss
                     }
@@ -620,6 +620,10 @@ async function readSyscheckFile(filename) {
           type = matchArr[3]
         } else if (matchArr = basename.match(/^syscheck$/)){
           type = 'syscheck'
+        }
+
+        if (type == 'syscheck') {
+          type = 'file'
         }
         mongoose.connect(url + "/" + agentDb).then(() => {
           return new Promise((connResolve, connReject) => {
@@ -971,6 +975,8 @@ watcher
       await updateAgentInfoFromFile(fPath);
     } else if (fPath.indexOf("/queue/rootcheck/") > -1) {
       await readRootcheckFile(fPath);
+    }  else if (fPath.indexOf("/queue/syscheck/") > -1) {
+      await readSyscheckFile(fPath);
     }
   })
   .on('unlink',async function(fPath) {
@@ -1017,6 +1023,9 @@ watcher
       // } else if (fPath.match(/^syscheck$/)) {
       //   childObj[fPath].kill()
       // }
+      await dropCollectionSync(agentDb, 'fim_event');
+      await dropCollectionSync(agentDb, 'fim_file');
+      await dropCollectionSync(agentDb, 'fimCounterInfo');
     }
     //file on watcher list deleted
     console.log('File', fPath, 'has been removed');
