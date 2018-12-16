@@ -689,11 +689,12 @@ async function readSyscheckFile(filename) {
                           id_file = findRes._id
 
                           var docs = await syscheckEventModel.find({
-                            id_file: id_file
+                            file_id: id_file
                           }).sort({ _id: -1 }).limit(1).exec();
                           if (docs) {
                             // found last event of the file
                             //suppose to have 1 and only 1 doc
+                            console.log(docs.length)
                             if (docs.length == 1) {
                               var doc = docs[0]
                               if (doc.event == "added" || doc.event == 'modified' || doc.event =='readded') {
@@ -701,6 +702,8 @@ async function readSyscheckFile(filename) {
                               } else {
                                 event = 'readded'
                               }
+                            } else {
+                              console.log('This is odd: ' + findRes.path + ' - ' + findRes.type)
                             }
                           } else {
                             // no event was found - impossible since inserting into pim_file will also insert an event into fim_event
@@ -728,7 +731,7 @@ async function readSyscheckFile(filename) {
                             setDefaultsOnInsert: true
                           }).exec();
                         }
-                        var newFimEvent = {
+                        var newFimEvent = new syscheckEventModel({
                           file_id: id_file,
                           type: event,
                           date: time,
@@ -738,8 +741,16 @@ async function readSyscheckFile(filename) {
                           gid: gid,
                           md5: md5,
                           sha1: sha1
+                        })
+                        var fimEvent = await newFimEvent.save();
+                        if (fimEvent != null) {
+                          var fimCounterInfo = await fimCounterInfoModel.findOneAndUpdate({}, {$inc: { fim_event_counter: 1} }, {
+                            new: true,
+                            upsert: true,
+                            setDefaultsOnInsert: true
+                          }).exec();
                         }
-                        fim_event_arr.push(newFimEvent);
+                        // fim_event_arr.push(newFimEvent);
                       } catch (findErr) {
                         console.log("Find Error: " + findErr)
                       }
@@ -829,24 +840,25 @@ async function readSyscheckFile(filename) {
                   }
                 }
                 console.log('Add all line from file ' + filename + ' - ' + moment.now())
-                console.log(fim_event_arr.length)
-                syscheckEventModel.insertMany(fim_event_arr).then(() => {
-                  console.log("Closing db at inserting fim-event " + agentDb + " - " + moment.now())
-                  fimCounterInfoModel.findOneAndUpdate({}, {$inc: { fim_event_counter: fim_event_arr.length} }, {
-                    new: true,
-                    upsert: true,
-                    setDefaultsOnInsert: true
-                  }).exec().then((res) => {
-                    console.log(res + " - " + moment.now())
-                    mongoose.connection.close().then(countFindResolve);
-                  }).catch(incError => {
-                    console.log("Increase fim_event counter error: " + incError);
-                    mongoose.connection.close().then(countFindReject);
-                  })
-                }).catch(error  => {
-                  console.log('Insert fim event error: ' + error)
-                  mongoose.connection.close().then(countFindReject);
-                })
+                mongoose.connection.close().then(countFindResolve);
+                // console.log(fim_event_arr.length)
+                // syscheckEventModel.insertMany(fim_event_arr).then(() => {
+                //   console.log("Closing db at inserting fim-event " + agentDb + " - " + moment.now())
+                //   fimCounterInfoModel.findOneAndUpdate({}, {$inc: { fim_event_counter: fim_event_arr.length} }, {
+                //     new: true,
+                //     upsert: true,
+                //     setDefaultsOnInsert: true
+                //   }).exec().then((res) => {
+                //     console.log(res + " - " + moment.now())
+                //     mongoose.connection.close().then(countFindResolve);
+                //   }).catch(incError => {
+                //     console.log("Increase fim_event counter error: " + incError);
+                //     mongoose.connection.close().then(countFindReject);
+                //   })
+                // }).catch(error  => {
+                //   console.log('Insert fim event error: ' + error)
+                //   mongoose.connection.close().then(countFindReject);
+                // })
               })
             }).then(connResolve).catch(error => {
               console.log('Getting next syscheck event counter error: ' + error)
