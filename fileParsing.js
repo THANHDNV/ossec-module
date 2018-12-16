@@ -951,7 +951,7 @@ async function readFilesFirst() {
 // watcher will watch file asynchronously
 
 async function watchFile(){
-  var watcher = chokidar.watch(filesAndDir, {persistent: true, awaitWriteFinish: true, usePolling: true, atomic: true});
+  var watcher = chokidar.watch(filesAndDir, {persistent: true, awaitWriteFinish: { stabilityThreshold: 5000, pollInterval: 200 }, usePolling: true, atomic: true});
 
 watcher
   .on('add',async function(fPath, stat) {
