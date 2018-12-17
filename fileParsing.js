@@ -481,8 +481,8 @@ async function readRootcheckFile(filename) {
                     var pci_dss = log.match(regex) ? log.match(regex)[1] : null
 
                     var event = {
-                      date_first: start_time,
-                      date_last: end_time,
+                      date_first: end_time,
+                      date_last: start_time,
                       log: log,
                       pci_dss: pci_dss
                     }
